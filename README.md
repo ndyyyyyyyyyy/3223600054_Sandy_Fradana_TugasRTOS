@@ -23,8 +23,8 @@ Konfigurasi Task FreeRTOS
 
 * Buat dua task utama:
 
-  1. TaskSensor1/Aktuator1 pada Core 0 untuk membaca data sensor secara berkala
-  2. TaskSensor2/Aktuator2 pada Core 1 untuk mengontrol aktuator sesuai hasil pembacaan sensor
+  1. TaskCore0 untuk membaca data sensor secara berkala
+  2. TaskCore1 untuk mengontrol aktuator sesuai hasil pembacaan sensor
 * Gunakan fungsi xTaskCreatePinnedToCore() untuk menempatkan task pada core yang diinginkan
 * Atur prioritas task agar sistem tetap seimbang dan responsif
 
@@ -39,6 +39,3 @@ Pengujian
 2. Buka Serial Monitor untuk memantau proses eksekusi task
 3. Ubah nilai input dari sensor dan amati respons aktuator secara real-time
 4. Perhatikan bahwa kedua core berjalan simultan dengan pembagian beban kerja yang merata
-
-
-Apakah kamu ingin aku ubah lagi jadi format **.txt** atau **.md** siap upload ke GitHub?
