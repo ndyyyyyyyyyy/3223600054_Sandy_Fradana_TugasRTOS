@@ -37,5 +37,5 @@ Pengujian
 
 1. Upload program ke board ESP32-S3
 2. Buka Serial Monitor untuk memantau proses eksekusi task
-3. Ubah nilai input dari sensor dan amati respons aktuator secara real-time
+3. Ubah nilai input dan amati respons secara real-time
 4. Perhatikan bahwa kedua core berjalan simultan dengan pembagian beban kerja yang merata
