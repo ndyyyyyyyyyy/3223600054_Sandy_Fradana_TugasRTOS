@@ -1,195 +1,205 @@
 #include <Arduino.h>
 #include <Wire.h>
-#include <ESP32Servo.h>
+#include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <ESP32Servo.h>
+#include <AccelStepper.h>
 
-#define SCREEN_WIDTH 128
-#define SCREEN_HEIGHT 64
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+#define LED1_PIN 19
+#define LED2_PIN 20
+#define LED3_PIN 21
+#define BTN1_PIN 37
+#define BTN2_PIN 38
+#define BUZZER_PIN 36
+#define POT_PIN 14
+#define ENCODER_CLK 41
+#define ENCODER_DT 42
+#define STEPPER_A_PLUS 15
+#define STEPPER_A_MINUS 16
+#define STEPPER_B_PLUS 7
+#define STEPPER_B_MINUS 6
+#define SERVO_PIN 13
 
-#define POT_PIN       14
-#define LED_RED       19
-#define LED_GREEN     20
-#define LED_ORANGE    21
-#define BTN1          37
-#define BTN2          38
-#define BUZZER_PIN    36
-#define STEP_A_PLUS   15
-#define STEP_A_MINUS  16
-#define STEP_B_PLUS   7
-#define STEP_B_MINUS  6
-#define ENCODER_CLK   41
-#define ENCODER_DT    42
-#define SERVO_PIN     13
-#define OLED_SDA      5
-#define OLED_SCL      4
+Adafruit_SSD1306 display(128, 64, &Wire, -1);
+Servo servo1;
+AccelStepper stepper(AccelStepper::FULL4WIRE, STEPPER_A_PLUS, STEPPER_A_MINUS, STEPPER_B_PLUS, STEPPER_B_MINUS);
 
-Servo servo;
-volatile int encoderPos = 0;
-int lastEncoderA = 0;
-bool dirCW = true;
+QueueHandle_t xQueuePot, xQueueEncoder;
+SemaphoreHandle_t xMutexOLED;
 
-void taskPot(void *pvParameters);
-void taskLED(void *pvParameters);
-void taskButton(void *pvParameters);
-void taskBuzzer(void *pvParameters);
-void taskStepper(void *pvParameters);
-void taskEncoder(void *pvParameters);
-void taskServo(void *pvParameters);
-void taskOLED(void *pvParameters);
+void TaskLED(void *pvParameters) {
+  pinMode(LED1_PIN, OUTPUT);
+  pinMode(LED2_PIN, OUTPUT);
+  pinMode(LED3_PIN, OUTPUT);
+  int ledState = 0;
+  while(1) {
+    digitalWrite(LED1_PIN, ledState & 1);
+    digitalWrite(LED2_PIN, ledState & 2);
+    digitalWrite(LED3_PIN, ledState & 4);
+    ledState = (ledState + 1) % 8;
+    vTaskDelay(pdMS_TO_TICKS(500));
+  }
+}
 
-void IRAM_ATTR readEncoder() {
-  int a = digitalRead(ENCODER_CLK);
-  int b = digitalRead(ENCODER_DT);
-  if (a != lastEncoderA) {
-    encoderPos += (a == b) ? 1 : -1;
-    lastEncoderA = a;
+void TaskBuzzer(void *pvParameters) {
+  pinMode(BUZZER_PIN, OUTPUT);
+  int frequency = 1000;
+  while(1) {
+    tone(BUZZER_PIN, frequency, 100);
+    frequency = (frequency > 2000) ? 1000 : frequency + 100;
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
+}
+
+void TaskButton(void *pvParameters) {
+  pinMode(BTN1_PIN, INPUT_PULLUP);
+  pinMode(BTN2_PIN, INPUT_PULLUP);
+  int lastBtn1 = HIGH, lastBtn2 = HIGH;
+  while(1) {
+    int btn1 = digitalRead(BTN1_PIN);
+    int btn2 = digitalRead(BTN2_PIN);
+    if (btn1 != lastBtn1) {
+      Serial.printf("Button 1: %s\n", btn1 ? "RELEASED" : "PRESSED");
+      lastBtn1 = btn1;
+    }
+    if (btn2 != lastBtn2) {
+      Serial.printf("Button 2: %s\n", btn2 ? "RELEASED" : "PRESSED");
+      lastBtn2 = btn2;
+    }
+    vTaskDelay(pdMS_TO_TICKS(50));
+  }
+}
+
+void TaskPotentiometer(void *pvParameters) {
+  int lastPotValue = -1;
+  while(1) {
+    int potValue = analogRead(POT_PIN);
+    if (abs(potValue - lastPotValue) > 10) {
+      xQueueSend(xQueuePot, &potValue, portMAX_DELAY);
+      Serial.printf("Potentiometer: %d\n", potValue);
+      lastPotValue = potValue;
+    }
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
+}
+
+void TaskEncoder(void *pvParameters) {
+  pinMode(ENCODER_CLK, INPUT_PULLUP);
+  pinMode(ENCODER_DT, INPUT_PULLUP);
+  int lastCLK = digitalRead(ENCODER_CLK);
+  int encoderCount = 0;
+  int lastEncoderCount = 0;
+  while(1) {
+    int currentCLK = digitalRead(ENCODER_CLK);
+    if (currentCLK != lastCLK) {
+      if (digitalRead(ENCODER_DT) != currentCLK) {
+        encoderCount++;
+      } else {
+        encoderCount--;
+      }
+      if (encoderCount != lastEncoderCount) {
+        xQueueSend(xQueueEncoder, &encoderCount, portMAX_DELAY);
+        Serial.printf("Encoder Count: %d\n", encoderCount);
+        lastEncoderCount = encoderCount;
+      }
+    }
+    lastCLK = currentCLK;
+    vTaskDelay(pdMS_TO_TICKS(1));
+  }
+}
+
+void TaskStepper(void *pvParameters) {
+  stepper.setMaxSpeed(1000);
+  stepper.setAcceleration(500);
+  stepper.setSpeed(200);
+  while(1) {
+    stepper.moveTo(200);
+    while(stepper.currentPosition() != 200) {
+      stepper.run();
+      vTaskDelay(1);
+    }
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    stepper.moveTo(0);
+    while(stepper.currentPosition() != 0) {
+      stepper.run();
+      vTaskDelay(1);
+    }
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
+}
+
+void TaskServo(void *pvParameters) {
+  servo1.attach(SERVO_PIN);
+  int angle = 0;
+  int direction = 1;
+  while(1) {
+    servo1.write(angle);
+    angle += direction * 10;
+    if (angle >= 180 || angle <= 0) {
+      direction *= -1;
+    }
+    vTaskDelay(pdMS_TO_TICKS(500));
+  }
+}
+
+void TaskOLED(void *pvParameters) {
+  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println("SSD1306 allocation failed");
+    while(1);
+  }
+  Serial.println("OLED initialized successfully");
+  display.clearDisplay();
+  display.setTextSize(2);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0);
+  int potValue = 0, encoderValue = 0;
+  unsigned long lastDisplayUpdate = 0;
+  if (xSemaphoreTake(xMutexOLED, portMAX_DELAY) == pdTRUE) {
+    display.clearDisplay();
+    display.setCursor(10, 20);
+    display.println("Hello!");
+    display.display();
+    xSemaphoreGive(xMutexOLED);
+  }
+  vTaskDelay(pdMS_TO_TICKS(2000));
+  while(1) {
+    if (xQueueReceive(xQueuePot, &potValue, 0) == pdTRUE) {}
+    if (xQueueReceive(xQueueEncoder, &encoderValue, 0) == pdTRUE) {}
+    if (xSemaphoreTake(xMutexOLED, portMAX_DELAY) == pdTRUE) {
+      display.clearDisplay();
+      display.setTextSize(1);
+      display.setCursor(0, 0);
+      display.println("System Monitor");
+      display.println("-------------");
+      display.printf("Pot: %d\n", potValue);
+      display.printf("Encoder: %d\n", encoderValue);
+      display.printf("Time: %lu\n", millis()/1000);
+      display.display();
+      xSemaphoreGive(xMutexOLED);
+    }
+    vTaskDelay(pdMS_TO_TICKS(200));
   }
 }
 
 void setup() {
   Serial.begin(115200);
-  delay(500);
-  Serial.println("\n=== Dual-Core ESP32-S3 FreeRTOS Demo ===");
-
-  pinMode(LED_RED, OUTPUT);
-  pinMode(LED_GREEN, OUTPUT);
-  pinMode(LED_ORANGE, OUTPUT);
-  pinMode(BTN1, INPUT_PULLUP);
-  pinMode(BTN2, INPUT_PULLUP);
-  pinMode(BUZZER_PIN, OUTPUT);
-  pinMode(STEP_A_PLUS, OUTPUT);
-  pinMode(STEP_A_MINUS, OUTPUT);
-  pinMode(STEP_B_PLUS, OUTPUT);
-  pinMode(STEP_B_MINUS, OUTPUT);
-  pinMode(ENCODER_CLK, INPUT_PULLUP);
-  pinMode(ENCODER_DT, INPUT_PULLUP);
-
-  attachInterrupt(digitalPinToInterrupt(ENCODER_CLK), readEncoder, CHANGE);
-
-  servo.attach(SERVO_PIN);
-
-  Wire.begin(OLED_SDA, OLED_SCL);
-  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
-    Serial.println("OLED not found!");
-  } else {
-    display.clearDisplay();
-    display.setTextSize(1);
-    display.setTextColor(SSD1306_WHITE);
-    display.setCursor(0, 0);
-    display.print("ESP32-S3 Ready");
-    display.display();
-  }
-
-  xTaskCreatePinnedToCore(taskPot,     "PotTask",     4096, NULL, 1, NULL, 0);
-  xTaskCreatePinnedToCore(taskLED,     "LEDTask",     4096, NULL, 1, NULL, 1);
-  xTaskCreatePinnedToCore(taskButton,  "ButtonTask",  4096, NULL, 1, NULL, 0);
-  xTaskCreatePinnedToCore(taskBuzzer,  "BuzzTask",    4096, NULL, 1, NULL, 1);
-  xTaskCreatePinnedToCore(taskStepper, "StepperTask", 4096, NULL, 1, NULL, 0);
-  xTaskCreatePinnedToCore(taskEncoder, "EncoderTask", 4096, NULL, 1, NULL, 1);
-  xTaskCreatePinnedToCore(taskServo,   "ServoTask",   4096, NULL, 1, NULL, 0);
-  xTaskCreatePinnedToCore(taskOLED,    "OLEDTask",    4096, NULL, 1, NULL, 1);
+  delay(1000);
+  Serial.println("ESP32-S3 Multi-Task System Starting...");
+  Wire.begin(5, 4);
+  xQueuePot = xQueueCreate(10, sizeof(int));
+  xQueueEncoder = xQueueCreate(10, sizeof(int));
+  xMutexOLED = xSemaphoreCreateMutex();
+  xTaskCreatePinnedToCore(TaskLED, "TaskLED", 2048, NULL, 1, NULL, 0);
+  xTaskCreatePinnedToCore(TaskBuzzer, "TaskBuzzer", 2048, NULL, 1, NULL, 0);
+  xTaskCreatePinnedToCore(TaskStepper, "TaskStepper", 4096, NULL, 2, NULL, 0);
+  xTaskCreatePinnedToCore(TaskServo, "TaskServo", 2048, NULL, 1, NULL, 0);
+  xTaskCreatePinnedToCore(TaskButton, "TaskButton", 2048, NULL, 2, NULL, 1);
+  xTaskCreatePinnedToCore(TaskPotentiometer, "TaskPotentiometer", 2048, NULL, 1, NULL, 1);
+  xTaskCreatePinnedToCore(TaskEncoder, "TaskEncoder", 2048, NULL, 2, NULL, 1);
+  xTaskCreatePinnedToCore(TaskOLED, "TaskOLED", 4096, NULL, 3, NULL, 1);
+  Serial.println("All tasks created successfully!");
 }
 
-void loop() {} 
-
-void taskPot(void *pvParameters) {
-  while (true) {
-    int potValue = analogRead(POT_PIN);
-    Serial.printf("[Core%d] POT → %d\n", xPortGetCoreID(), potValue);
-    vTaskDelay(500 / portTICK_PERIOD_MS);
-  }
-}
-
-void taskLED(void *pvParameters) {
-  while (true) {
-    digitalWrite(LED_RED, HIGH);
-    vTaskDelay(200 / portTICK_PERIOD_MS);
-    digitalWrite(LED_RED, LOW);
-    digitalWrite(LED_GREEN, HIGH);
-    vTaskDelay(200 / portTICK_PERIOD_MS);
-    digitalWrite(LED_GREEN, LOW);
-    digitalWrite(LED_ORANGE, HIGH);
-    vTaskDelay(200 / portTICK_PERIOD_MS);
-    digitalWrite(LED_ORANGE, LOW);
-  }
-}
-
-void taskButton(void *pvParameters) {
-  while (true) {
-    bool b1 = !digitalRead(BTN1);
-    bool b2 = !digitalRead(BTN2);
-    if (b1 || b2) {
-      Serial.printf("[Core%d] Button Pressed: %s%s\n",
-                    xPortGetCoreID(),
-                    b1 ? "BTN1 " : "",
-                    b2 ? "BTN2" : "");
-    }
-    vTaskDelay(100 / portTICK_PERIOD_MS);
-  }
-}
-
-void taskBuzzer(void *pvParameters) {
-  while (true) {
-    tone(BUZZER_PIN, 1000);
-    vTaskDelay(300 / portTICK_PERIOD_MS);
-    noTone(BUZZER_PIN);
-    vTaskDelay(700 / portTICK_PERIOD_MS);
-  }
-}
-
-void taskStepper(void *pvParameters) {
-  const int seq[4][4] = {
-    {1, 0, 1, 0},
-    {0, 1, 1, 0},
-    {0, 1, 0, 1},
-    {1, 0, 0, 1}
-  };
-  int step = 0;
-  while (true) {
-    for (int i = 0; i < 4; i++) {
-      digitalWrite(STEP_A_PLUS, seq[i][0]);
-      digitalWrite(STEP_A_MINUS, seq[i][1]);
-      digitalWrite(STEP_B_PLUS, seq[i][2]);
-      digitalWrite(STEP_B_MINUS, seq[i][3]);
-      vTaskDelay(5 / portTICK_PERIOD_MS);
-    }
-    if (++step % 50 == 0)
-      Serial.printf("[Core%d] Stepper running: step=%d\n", xPortGetCoreID(), step);
-  }
-}
-
-void taskEncoder(void *pvParameters) {
-  int last = 0;
-  while (true) {
-    if (encoderPos != last) {
-      Serial.printf("[Core%d] Encoder → %d\n", xPortGetCoreID(), encoderPos);
-      last = encoderPos;
-    }
-    vTaskDelay(50 / portTICK_PERIOD_MS);
-  }
-}
-
-void taskServo(void *pvParameters) {
-  while (true) {
-    for (int pos = 0; pos <= 180; pos += 10) {
-      servo.write(pos);
-      vTaskDelay(100 / portTICK_PERIOD_MS);
-    }
-    for (int pos = 180; pos >= 0; pos -= 10) {
-      servo.write(pos);
-      vTaskDelay(100 / portTICK_PERIOD_MS);
-    }
-  }
-}
-
-void taskOLED(void *pvParameters) {
-  while (true) {
-    display.clearDisplay();
-    display.setCursor(0, 0);
-    display.printf("Core%d Active\n", xPortGetCoreID());
-    display.printf("Encoder: %d\n", encoderPos);
-    display.display();
-    vTaskDelay(500 / portTICK_PERIOD_MS);
-  }
+void loop() {
+  vTaskDelete(NULL);
 }
