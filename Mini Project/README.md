@@ -40,7 +40,8 @@ Hardware yang Digunakan :
 
 ESP32-S3 DevKitC-1,
 Rotary Encoder,
-Servo SG90,
+Servo,
 Potentiometer,
-OLED SSD1306,
+OLED,
 Button Start/Stop	
+
