@@ -5,16 +5,16 @@ Sistem penghitung barang otomatis berbasis ESP32-S3, menggunakan Interrupt, Queu
 
 Fitur Utama
 
-Penghitungan barang otomatis menggunakan Rotary Encoder
-Increment & Decrement (barang masuk / barang keluar)
-Kontrol Start/Stop menggunakan tombol interrupt
-Servo motor bergerak sebagai simulasi konveyor
-Potensiometer untuk mengatur kecepatan servo
-OLED Display menampilkan:
-Status RUN / STOP
-Jumlah barang (Count)
-Nilai potensiometer real-time
-Arsitektur FreeRTOS:
+1. Penghitungan barang otomatis menggunakan Rotary Encoder
+2. Increment & Decrement (barang masuk / barang keluar)
+3. Kontrol Start/Stop menggunakan tombol interrupt
+4. Servo motor bergerak sebagai simulasi konveyor
+5. Potensiometer untuk mengatur kecepatan servo
+6. OLED Display menampilkan:
+   Status RUN / STOP
+   Jumlah barang (Count)
+   Nilai potensiometer real-time
+7. Arsitektur FreeRTOS:
    Interrupt → Queue (Encoder)
    Interrupt → Semaphore (Button)
    Mutex OLED & Mutex Servo
